@@ -58,7 +58,7 @@ async function uploadFileToDrive(buffer, name, mimetype, folderId) {
   return res.data.id;
 }
 
-app.post('/api/reporte', upload.array('fotos'), async (req, res) => {
+app.post('/enviar-reporte', upload.array('fotos'), async (req, res) => {
   try {
     const {
       supervisor,
