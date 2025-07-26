@@ -8,26 +8,30 @@ const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
 
-// FIREBASE ADMIN SDK
-const firebaseCredentials = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-admin.initializeApp({
-   credential: admin.credential.cert(firebaseCredentials),
-});
-const firestore = admin.firestore();
-
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// GOOGLE DRIVE AUTH
-const driveCredentials = JSON.parse(process.env.DRIVE_SERVICE_ACCOUNT_JSON);
+// 🔐 Parseamos las claves desde variables de entorno con reemplazo de \n
+const firebaseCredentials = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+firebaseCredentials.private_key = firebaseCredentials.private_key.replace(/\\n/g, '\n');
 
+const driveCredentials = JSON.parse(process.env.DRIVE_SERVICE_ACCOUNT_JSON);
+driveCredentials.private_key = driveCredentials.private_key.replace(/\\n/g, '\n');
+
+// 🔥 Inicializar Firebase Admin
+admin.initializeApp({
+  credential: admin.credential.cert(firebaseCredentials),
+});
+const firestore = admin.firestore();
+
+// 📁 Inicializar Google Drive Auth
 const auth = new google.auth.GoogleAuth({
   credentials: driveCredentials,
   scopes: ['https://www.googleapis.com/auth/drive'],
 });
-
 const drive = google.drive({ version: 'v3', auth });
 
+// 📂 Buscar o crear carpeta en Drive
 async function getOrCreateFolder(parentId, folderName) {
   const res = await drive.files.list({
     q: `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents`,
@@ -46,6 +50,7 @@ async function getOrCreateFolder(parentId, folderName) {
   return newFolder.data.id;
 }
 
+// ⬆️ Subir archivo a Google Drive
 async function uploadFileToDrive(buffer, name, mimetype, folderId) {
   const res = await drive.files.create({
     requestBody: {
@@ -60,6 +65,7 @@ async function uploadFileToDrive(buffer, name, mimetype, folderId) {
   return res.data.id;
 }
 
+// 🚀 Ruta principal para recibir reportes
 app.post('/enviar-reporte', upload.array('fotos'), async (req, res) => {
   try {
     const {
@@ -143,4 +149,3 @@ app.post('/enviar-reporte', upload.array('fotos'), async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Backend COMTEC activo en puerto ${PORT}`));
-    
