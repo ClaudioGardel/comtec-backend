@@ -8,30 +8,25 @@ const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
 
-const app = express();
-const upload = multer({ storage: multer.memoryStorage() });
-
-// 🔐 Parseamos las claves desde variables de entorno con reemplazo de \n
+// FIREBASE ADMIN SDK
 const firebaseCredentials = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-firebaseCredentials.private_key = firebaseCredentials.private_key.replace(/\\n/g, '\n');
-
-const driveCredentials = JSON.parse(process.env.DRIVE_SERVICE_ACCOUNT_JSON);
-driveCredentials.private_key = driveCredentials.private_key.replace(/\\n/g, '\n');
-
-// 🔥 Inicializar Firebase Admin
 admin.initializeApp({
   credential: admin.credential.cert(firebaseCredentials),
 });
 const firestore = admin.firestore();
 
-// 📁 Inicializar Google Drive Auth
+const app = express();
+const upload = multer({ storage: multer.memoryStorage() });
+
+// GOOGLE DRIVE AUTH
+const driveCredentials = JSON.parse(process.env.DRIVE_SERVICE_ACCOUNT_JSON);
 const auth = new google.auth.GoogleAuth({
   credentials: driveCredentials,
   scopes: ['https://www.googleapis.com/auth/drive'],
 });
 const drive = google.drive({ version: 'v3', auth });
 
-// 📂 Buscar o crear carpeta en Drive
+// 🔁 Crear carpeta si no existe
 async function getOrCreateFolder(parentId, folderName) {
   const res = await drive.files.list({
     q: `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents`,
@@ -50,22 +45,24 @@ async function getOrCreateFolder(parentId, folderName) {
   return newFolder.data.id;
 }
 
-// ⬆️ Subir archivo a Google Drive
-async function uploadFileToDrive(buffer, name, mimetype, folderId) {
+// ⬆️ Subir archivos (buffer o stream)
+async function uploadFileToDrive(fileData, name, mimetype, folderId) {
+  const media =
+    typeof fileData.pipe === 'function'
+      ? { mimeType: mimetype, body: fileData } // stream (PDF)
+      : { mimeType: mimetype, body: Buffer.from(fileData) }; // buffer (fotos)
+
   const res = await drive.files.create({
     requestBody: {
       name,
       parents: [folderId],
     },
-    media: {
-      mimeType: mimetype,
-      body: buffer,
-    },
+    media,
   });
+
   return res.data.id;
 }
 
-// 🚀 Ruta principal para recibir reportes
 app.post('/enviar-reporte', upload.array('fotos'), async (req, res) => {
   try {
     const {
@@ -81,7 +78,7 @@ app.post('/enviar-reporte', upload.array('fotos'), async (req, res) => {
 
     const fechaFormato = fecha.split('T')[0];
 
-    // 📁 Crear carpetas en Google Drive
+    // 📁 Crear carpetas en Drive
     const rootFolderId = await getOrCreateFolder('root', 'COMTEC');
     const fechaFolderId = await getOrCreateFolder(rootFolderId, fechaFormato);
 
@@ -89,7 +86,7 @@ app.post('/enviar-reporte', upload.array('fotos'), async (req, res) => {
     const fotoIds = [];
     for (const file of req.files) {
       const fotoId = await uploadFileToDrive(
-        Buffer.from(file.buffer),
+        file.buffer,
         `${Date.now()}_${file.originalname}`,
         file.mimetype,
         fechaFolderId
@@ -116,13 +113,13 @@ app.post('/enviar-reporte', upload.array('fotos'), async (req, res) => {
     doc.moveDown();
     doc.text('Dificultades encontradas:');
     doc.text(dificultades);
-
     doc.end();
+
     await new Promise((resolve) => doc.on('finish', resolve));
 
     // ☁️ Subir PDF a Drive
-    const pdfBuffer = fs.createReadStream(pdfPath);
-    await uploadFileToDrive(pdfBuffer, `Reporte_${fechaFormato}.pdf`, 'application/pdf', fechaFolderId);
+    const pdfStream = fs.createReadStream(pdfPath);
+    await uploadFileToDrive(pdfStream, `Reporte_${fechaFormato}.pdf`, 'application/pdf', fechaFolderId);
 
     // 🧼 Eliminar archivo temporal
     fs.unlinkSync(pdfPath);
