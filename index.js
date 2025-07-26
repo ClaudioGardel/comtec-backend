@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 
 // FIREBASE ADMIN SDK
-const serviceAccount = require('./firebase-service-account.json');
+const firebaseServiceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
@@ -19,12 +19,12 @@ const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
 // GOOGLE DRIVE AUTH
-const auth = new google.auth.GoogleAuth({
-  keyFile: 'drive-service-account.json',
+const driveAuth = new google.auth.GoogleAuth({
+  credentials: JSON.parse(process.env.DRIVE_SERVICE_ACCOUNT_JSON),
   scopes: ['https://www.googleapis.com/auth/drive'],
 });
 
-const drive = google.drive({ version: 'v3', auth });
+const drive = google.drive({ version: 'v3', auth: driveAuth });
 
 async function getOrCreateFolder(parentId, folderName) {
   const res = await drive.files.list({
