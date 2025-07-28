@@ -11,10 +11,10 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 // 🔐 Cargar claves desde variables de entorno
 const firebaseCredentials = JSON.parse(
-  process.env.FIREBASE_SERVICE_ACCOUNT_JSON.replace(/\\n/g, '\n')
+  process.env.FIREBASE_SERVICE_ACCOUNT_JSON
 );
 const driveCredentials = JSON.parse(
-  process.env.DRIVE_SERVICE_ACCOUNT_JSON.replace(/\\n/g, '\n')
+  process.env.DRIVE_SERVICE_ACCOUNT_JSON
 );
 
 // 🔥 Inicializar Firebase
