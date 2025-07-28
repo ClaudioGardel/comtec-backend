@@ -9,20 +9,21 @@ const path = require('path');
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// 🔐 Corregir saltos de línea en claves privadas
-const rawFirebase = process.env.FIREBASE_SERVICE_ACCOUNT_JSON.replace(/\\n/g, '\n');
-const firebaseCredentials = JSON.parse(rawFirebase);
+// 🔐 Cargar claves desde variables de entorno
+const firebaseCredentials = JSON.parse(
+  process.env.FIREBASE_SERVICE_ACCOUNT_JSON.replace(/\\n/g, '\n')
+);
+const driveCredentials = JSON.parse(
+  process.env.DRIVE_SERVICE_ACCOUNT_JSON.replace(/\\n/g, '\n')
+);
 
-const rawDrive = process.env.DRIVE_SERVICE_ACCOUNT_JSON.replace(/\\n/g, '\n');
-const driveCredentials = JSON.parse(rawDrive);
-
-// 🔥 Inicializar Firebase Admin
+// 🔥 Inicializar Firebase
 admin.initializeApp({
   credential: admin.credential.cert(firebaseCredentials),
 });
 const firestore = admin.firestore();
 
-// 📁 Configurar Google Drive
+// 📁 Inicializar Google Drive
 const auth = new google.auth.GoogleAuth({
   credentials: driveCredentials,
   scopes: ['https://www.googleapis.com/auth/drive'],
@@ -92,7 +93,7 @@ app.post('/enviar-reporte', upload.array('fotos'), async (req, res) => {
       fotoIds.push(fotoId);
     }
 
-    // 🧾 Generar PDF temporal
+    // 🧾 Generar PDF
     const pdfPath = path.join(__dirname, `reporte_${Date.now()}.pdf`);
     const doc = new PDFDocument();
     doc.pipe(fs.createWriteStream(pdfPath));
@@ -115,11 +116,10 @@ app.post('/enviar-reporte', upload.array('fotos'), async (req, res) => {
     doc.end();
     await new Promise((resolve) => doc.on('finish', resolve));
 
-    // ☁️ Subir PDF a Drive
+    // ☁️ Subir PDF
     const pdfBuffer = fs.createReadStream(pdfPath);
     await uploadFileToDrive(pdfBuffer, `Reporte_${fechaFormato}.pdf`, 'application/pdf', fechaFolderId);
-
-    fs.unlinkSync(pdfPath); // 🧼 Eliminar PDF temporal
+    fs.unlinkSync(pdfPath);
 
     // 🔥 Guardar en Firestore
     await firestore.collection('reportes').add({
