@@ -2,144 +2,101 @@ const express = require('express');
 const multer = require('multer');
 const admin = require('firebase-admin');
 const { google } = require('googleapis');
-const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
+const cors = require('cors');
 
 const app = express();
-const upload = multer({ storage: multer.memoryStorage() });
+app.use(cors());
+app.use(express.json());
 
-// 🔐 Cargar claves desde variables de entorno
-const firebaseCredentials = JSON.parse(
-  process.env.FIREBASE_SERVICE_ACCOUNT_JSON
-);
-const driveCredentials = JSON.parse(
-  process.env.DRIVE_SERVICE_ACCOUNT_JSON
-);
+const upload = multer({ dest: 'uploads/' });
 
-// 🔥 Inicializar Firebase
+/** 🔐 Cargar claves desde variables de entorno */
+const firebaseConfig = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON.replace(/\\n/g, '\n'));
+const driveConfig = JSON.parse(process.env.GDRIVE_SERVICE_ACCOUNT_JSON.replace(/\\n/g, '\n'));
+
+/** 🚀 Inicializar Firebase */
 admin.initializeApp({
-  credential: admin.credential.cert(firebaseCredentials),
+  credential: admin.credential.cert(firebaseConfig),
 });
-const firestore = admin.firestore();
 
-// 📁 Inicializar Google Drive
+/** 🔧 Configurar Google Drive */
 const auth = new google.auth.GoogleAuth({
-  credentials: driveCredentials,
+  credentials: driveConfig,
   scopes: ['https://www.googleapis.com/auth/drive'],
 });
+
 const drive = google.drive({ version: 'v3', auth });
 
-async function getOrCreateFolder(parentId, folderName) {
-  const res = await drive.files.list({
-    q: `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents`,
-    fields: 'files(id, name)',
-  });
-  if (res.data.files.length > 0) return res.data.files[0].id;
-
-  const newFolder = await drive.files.create({
-    resource: {
-      name: folderName,
-      mimeType: 'application/vnd.google-apps.folder',
-      parents: [parentId],
-    },
-    fields: 'id',
-  });
-  return newFolder.data.id;
-}
-
-async function uploadFileToDrive(buffer, name, mimetype, folderId) {
-  const res = await drive.files.create({
-    requestBody: {
-      name,
-      parents: [folderId],
-    },
-    media: {
-      mimeType: mimetype,
-      body: buffer,
-    },
-  });
-  return res.data.id;
-}
-
-app.post('/enviar-reporte', upload.array('fotos'), async (req, res) => {
+/** 📦 Ruta para recibir archivos y datos del reporte */
+app.post('/upload', upload.array('fotos'), async (req, res) => {
   try {
-    const {
-      supervisor,
-      actividad,
-      fecha,
-      tareas,
-      dificultades,
-      tecnicos,
-      asistencia,
-      proyecto,
-    } = req.body;
+    const { datos } = req.body;
+    const parsedDatos = JSON.parse(datos);
+    const fecha = parsedDatos.fecha || new Date().toISOString().split('T')[0];
 
-    const fechaFormato = fecha.split('T')[0];
+    // 🔁 Crear carpeta con la fecha
+    const folderMetadata = {
+      name: fecha,
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: [process.env.GDRIVE_ROOT_FOLDER_ID],
+    };
 
-    // 📁 Crear carpetas en Drive
-    const rootFolderId = await getOrCreateFolder('root', 'COMTEC');
-    const fechaFolderId = await getOrCreateFolder(rootFolderId, fechaFormato);
-
-    // 📸 Subir fotos
-    const fotoIds = [];
-    for (const file of req.files) {
-      const fotoId = await uploadFileToDrive(
-        Buffer.from(file.buffer),
-        `${Date.now()}_${file.originalname}`,
-        file.mimetype,
-        fechaFolderId
-      );
-      fotoIds.push(fotoId);
-    }
-
-    // 🧾 Generar PDF
-    const pdfPath = path.join(__dirname, `reporte_${Date.now()}.pdf`);
-    const doc = new PDFDocument();
-    doc.pipe(fs.createWriteStream(pdfPath));
-
-    doc.fontSize(18).text('Reporte Diario - COMTEC', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(12).text(`Supervisor: ${supervisor}`);
-    doc.text(`Fecha: ${fechaFormato}`);
-    doc.text(`Actividad: ${actividad}`);
-    doc.text(`Proyecto: ${proyecto}`);
-    doc.text(`Técnicos: ${JSON.parse(tecnicos).join(', ')}`);
-    doc.text(`Asistencia: ${JSON.parse(asistencia).join(', ')}`);
-    doc.moveDown();
-    doc.text('Detalle de tareas:');
-    doc.text(tareas);
-    doc.moveDown();
-    doc.text('Dificultades encontradas:');
-    doc.text(dificultades);
-
-    doc.end();
-    await new Promise((resolve) => doc.on('finish', resolve));
-
-    // ☁️ Subir PDF
-    const pdfBuffer = fs.createReadStream(pdfPath);
-    await uploadFileToDrive(pdfBuffer, `Reporte_${fechaFormato}.pdf`, 'application/pdf', fechaFolderId);
-    fs.unlinkSync(pdfPath);
-
-    // 🔥 Guardar en Firestore
-    await firestore.collection('reportes').add({
-      supervisor,
-      actividad,
-      fecha,
-      tareas,
-      dificultades,
-      tecnicos: JSON.parse(tecnicos),
-      asistencia: JSON.parse(asistencia),
-      proyecto,
-      fotos: fotoIds,
+    const folder = await drive.files.create({
+      resource: folderMetadata,
+      fields: 'id',
     });
 
-    res.json({ ok: true, mensaje: 'Reporte recibido y guardado correctamente' });
+    const folderId = folder.data.id;
+
+    // 📤 Subir fotos a Drive
+    const uploadedUrls = [];
+    for (const file of req.files) {
+      const fileMetadata = {
+        name: file.originalname,
+        parents: [folderId],
+      };
+      const media = {
+        mimeType: file.mimetype,
+        body: fs.createReadStream(file.path),
+      };
+      const uploadedFile = await drive.files.create({
+        resource: fileMetadata,
+        media,
+        fields: 'id',
+      });
+
+      await drive.permissions.create({
+        fileId: uploadedFile.data.id,
+        requestBody: {
+          role: 'reader',
+          type: 'anyone',
+        },
+      });
+
+      const fileUrl = `https://drive.google.com/uc?id=${uploadedFile.data.id}`;
+      uploadedUrls.push(fileUrl);
+
+      fs.unlinkSync(file.path);
+    }
+
+    // 📝 Guardar en Firestore
+    const db = admin.firestore();
+    await db.collection('reportes').add({
+      ...parsedDatos,
+      fotos: uploadedUrls,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    res.status(200).json({ message: 'Reporte y archivos subidos correctamente', urls: uploadedUrls });
   } catch (error) {
-    console.error('❌ Error al procesar reporte:', error);
-    res.status(500).json({ ok: false, error: error.message });
+    console.error('❌ Error al subir reporte:', error);
+    res.status(500).json({ message: 'Error al subir reporte', error: error.message });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Backend COMTEC activo en puerto ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`✅ Servidor escuchando en puerto ${PORT}`);
+});
