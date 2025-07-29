@@ -6,12 +6,15 @@ const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
 const PDFDocument = require('pdfkit');
+require('dotenv').config();
+
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const upload = multer({ dest: '/enviar-reporte' });
+const upload = multer({ dest: 'uploads/' });
+
 
 /** 🔐 Cargar claves desde variables de entorno */
 const firebaseConfig = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON.replace(/\\n/g, '\n'));
@@ -94,7 +97,7 @@ app.post('/enviar-reporte', upload.array('fotos'), async (req, res) => {
 
     // 📄 Generar PDF
     const doc = new PDFDocument();
-    const pdfPath = `/enviar-reporte-${Date.now()}.pdf`;
+    const pdfPath = `uploads/reporte-${Date.now()}.pdf`;
     const writeStream = fs.createWriteStream(pdfPath);
     doc.pipe(writeStream);
 
